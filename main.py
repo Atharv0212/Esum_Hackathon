@@ -131,6 +131,10 @@ async def fetch_open_food_facts_product(barcode: str) -> Dict[str, Any]:
         return data
 
 
+import json
+import google.generativeai as genai
+from fastapi import HTTPException
+
 async def analyze_with_gemini(
     product_data: Dict[str, Any],
     user_profile: UserProfile,
@@ -141,7 +145,7 @@ async def analyze_with_gemini(
     product = product_data.get("product", {})
     product_name = product.get("product_name") or product.get("product_name_en") or "Unknown Product"
 
-    # Clean up the ingredients list
+    # Clean up the ingredients list for the prompt
     ingredients_texts = []
     for ing in product.get("ingredients", []):
         if isinstance(ing, dict) and "text" in ing:
@@ -149,28 +153,22 @@ async def analyze_with_gemini(
         elif isinstance(ing, str):
             ingredients_texts.append(ing)
 
-    # 2. Initialize Gemini with the Master System Prompt
+    # 2. Initialize Gemini 2.5 Flash (Higher quota for hackathons)
     model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
+        model_name="gemini-2.5-flash",
         system_instruction=get_master_system_prompt()
     )
 
-    # 3. Construct the clean, targeted User Prompt
+    # 3. Construct the User Prompt
     user_prompt = f"""
-    Please analyze this product against the user's medical profile.
-    
-    [USER PROFILE]
+    Analyze this product for the user.
     Allergies: {user_profile.allergies}
-    Diseases/Conditions: {user_profile.diseases}
-    
-    [PRODUCT DATA]
-    Barcode: {barcode}
-    Name: {product_name}
+    Diseases: {user_profile.diseases}
+    Product: {product_name}
     Ingredients: {ingredients_texts}
-    Raw OFF Data Dump: {product}
     """
 
-    # 4. Call Gemini and strictly enforce JSON output via the API
+    # 4. Call Gemini with Strict JSON Enforcement
     try:
         response = await model.generate_content_async(
             contents=user_prompt,
@@ -179,30 +177,40 @@ async def analyze_with_gemini(
             )
         )
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini API connection failed: {str(e)}")
+        raise HTTPException(status_code=502, detail=f"Gemini API error: {str(e)}")
 
-    # 5. Parse the guaranteed JSON response into our Pydantic model
+    # 5. Clean up and Parse the Response
+    raw_text = response.text.strip()
+    
+    # Remove Markdown code fences if Flash adds them (invincibility logic)
+    if raw_text.startswith("```"):
+        # Split by backticks and take the middle part
+        parts = raw_text.split("```")
+        if len(parts) >= 3:
+            raw_text = parts[1]
+            # Remove "json" language identifier if present
+            if raw_text.lower().startswith("json"):
+                raw_text = raw_text[4:].strip()
+
     try:
-        # Load the raw string into a Python dictionary
-        ai_data = json.loads(response.text)
+        ai_data = json.loads(raw_text)
         
-        # Inject our failsafes and required system data
+        # Inject required fields to ensure Pydantic validation passes
         ai_data["barcode"] = barcode
         ai_data["product_name"] = ai_data.get("product_name") or product_name
         ai_data["ingredients"] = ai_data.get("ingredients") or ingredients_texts
         ai_data["raw_openfoodfacts"] = {
             "product_name": product_name,
-            "ingredients_text": product.get("ingredients_text", "")
+            "code": barcode
         }
 
-        # Convert the dictionary into the strictly typed Pydantic response
+        # Validate against the Response Schema
         return ProductAnalysisResponse(**ai_data)
 
     except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail="Gemini did not return valid JSON.")
+        raise HTTPException(status_code=500, detail=f"AI returned invalid JSON formatting: {raw_text[:100]}...")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI data did not match Pydantic schema: {str(e)}\nRaw JSON: {response.text}")
-
+        raise HTTPException(status_code=500, detail=f"Schema Mismatch: {str(e)}")
 
 @app.post("/analyze", response_model=ProductAnalysisResponse)
 async def analyze_product(request: ProductRequest) -> ProductAnalysisResponse:
