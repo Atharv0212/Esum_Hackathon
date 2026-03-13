@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import google.generativeai as genai
 
+from prompts import get_master_system_prompt, build_off_user_instruction
+
 
 # Load environment variables from .env
 load_dotenv()
@@ -18,36 +20,6 @@ if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY is not set. Please configure it in your .env file.")
 
 genai.configure(api_key=GEMINI_API_KEY)
-
-
-def get_master_system_prompt() -> str:
-    """
-    Returns the WiseBite Master System Prompt.
-    """
-    return (
-        "You are WiseBite, a high-integrity food safety analyzer. "
-        "You cross-reference Open Food Facts data with a user's medical profile "
-        "(allergies, diseases) and prioritize safety. Any ingredient flagged as a "
-        "hazard must be clearly explained with its chemical impact. "
-        "You MUST respond with valid JSON ONLY, matching exactly this schema:\n"
-        "{\n"
-        '  "product_name": "string or null",\n'
-        '  "barcode": "string",\n'
-        '  "ingredients": ["string"],\n'
-        '  "ingredient_risks": [\n'
-        "    {\n"
-        '      "ingredient": "string",\n'
-        '      "hazard_level": "safe" | "caution" | "hazard",\n'
-        '      "explanation": "string",\n'
-        '      "related_allergies": ["string"],\n'
-        '      "related_diseases": ["string"]\n'
-        "    }\n"
-        "  ],\n"
-        '  "summary": "string",\n'
-        '  "warnings": ["string"]\n'
-        "}\n"
-        "Do not include any extra keys or commentary outside the JSON. "
-    )
 
 
 class HazardLevel(str, Enum):
@@ -100,6 +72,8 @@ app = FastAPI(title="WiseBite Backend", version="0.1.0")
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
 ]
 
 app.add_middleware(
@@ -116,22 +90,34 @@ OPENFOODFACTS_PRODUCT_URL = "https://world.openfoodfacts.org/api/v2/product/{bar
 
 async def fetch_open_food_facts_product(barcode: str) -> Dict[str, Any]:
     url = OPENFOODFACTS_PRODUCT_URL.format(barcode=barcode)
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        resp = await client.get(url)
-        if resp.status_code == 404:
-            raise HTTPException(status_code=404, detail="Product not found in Open Food Facts.")
-        try:
-            data = resp.json()
-        except ValueError:
-            raise HTTPException(status_code=502, detail="Invalid response from Open Food Facts.")
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            resp = await client.get(url)
+    except httpx.ReadTimeout:
+        raise HTTPException(
+            status_code=504,
+            detail="Timed out while contacting Open Food Facts. Please try again or check your internet connection.",
+        )
+    except httpx.RequestError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Error contacting Open Food Facts: {exc}",
+        )
 
-        if data.get("status") != 1:
-            raise HTTPException(status_code=404, detail="Product not found in Open Food Facts.")
+    if resp.status_code == 404:
+        raise HTTPException(status_code=404, detail="Product not found in Open Food Facts.")
+    try:
+        data = resp.json()
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Invalid response from Open Food Facts.")
 
-        return data
+    if data.get("status") != 1:
+        raise HTTPException(status_code=404, detail="Product not found in Open Food Facts.")
+
+    return data
 
 
-import json
+import json # <--- MAKE SURE THIS IS AT THE TOP
 import google.generativeai as genai
 from fastapi import HTTPException
 
@@ -140,78 +126,86 @@ async def analyze_with_gemini(
     user_profile: UserProfile,
     barcode: str,
 ) -> ProductAnalysisResponse:
-    
-    # 1. Safely extract raw data from Open Food Facts
-    product = product_data.get("product", {})
+    # 1. Extract raw data safely
+    product = product_data.get("product", {}) or {}
     product_name = product.get("product_name") or product.get("product_name_en") or "Unknown Product"
 
-    # Clean up the ingredients list for the prompt
     ingredients_texts = []
     for ing in product.get("ingredients", []):
         if isinstance(ing, dict) and "text" in ing:
-            ingredients_texts.append(ing["text"])
+            ingredients_texts.append(str(ing["text"]))
         elif isinstance(ing, str):
             ingredients_texts.append(ing)
 
-    # 2. Initialize Gemini 2.5 Flash (Higher quota for hackathons)
+    # 2. Initialize Gemini 2.5 Flash with System Prompt
     model = genai.GenerativeModel(
         model_name="gemini-2.5-flash",
         system_instruction=get_master_system_prompt()
     )
 
-    # 3. Construct the User Prompt
-    user_prompt = f"""
-    Analyze this product for the user.
-    Allergies: {user_profile.allergies}
-    Diseases: {user_profile.diseases}
-    Product: {product_name}
-    Ingredients: {ingredients_texts}
-    """
+    # 3. Build User Instruction
+    # We define the schema here to ensure it's always available
+    schema = {
+        "type": "object",
+        "properties": {
+            "product_name": {"type": "string"},
+            "barcode": {"type": "string"},
+            "ingredients": {"type": "array", "items": {"type": "string"}},
+            "ingredient_risks": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "ingredient": {"type": "string"},
+                        "hazard_level": {"type": "string", "enum": ["safe", "caution", "hazard"]},
+                        "explanation": {"type": "string"},
+                        "related_allergies": {"type": "array", "items": {"type": "string"}},
+                        "related_diseases": {"type": "array", "items": {"type": "string"}}
+                    },
+                    "required": ["ingredient", "hazard_level", "explanation", "related_allergies", "related_diseases"]
+                }
+            },
+            "summary": {"type": "string"},
+            "warnings": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["product_name", "barcode", "ingredients", "ingredient_risks", "summary", "warnings"]
+    }
 
-    # 4. Call Gemini with Strict JSON Enforcement
+    user_instruction = build_off_user_instruction(
+        user_profile=user_profile,
+        barcode=barcode,
+        product_name=product_name,
+        ingredients_texts=ingredients_texts,
+        product_subset={"product_name": product_name},
+        schema_description=schema
+    )
+
+    # 4. Generate and Parse
     try:
-        response = await model.generate_content_async(
-            contents=user_prompt,
-            generation_config=genai.types.GenerationConfig(
-                response_mime_type="application/json"
-            )
-        )
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Gemini API error: {str(e)}")
-
-    # 5. Clean up and Parse the Response
-    raw_text = response.text.strip()
-    
-    # Remove Markdown code fences if Flash adds them (invincibility logic)
-    if raw_text.startswith("```"):
-        # Split by backticks and take the middle part
-        parts = raw_text.split("```")
-        if len(parts) >= 3:
-            raw_text = parts[1]
-            # Remove "json" language identifier if present
-            if raw_text.lower().startswith("json"):
-                raw_text = raw_text[4:].strip()
-
-    try:
-        ai_data = json.loads(raw_text)
+        response = await model.generate_content_async(user_instruction["parts"])
+        text = response.text.strip()
         
-        # Inject required fields to ensure Pydantic validation passes
-        ai_data["barcode"] = barcode
-        ai_data["product_name"] = ai_data.get("product_name") or product_name
-        ai_data["ingredients"] = ai_data.get("ingredients") or ingredients_texts
-        ai_data["raw_openfoodfacts"] = {
+        # Strip markdown fences
+        if "```" in text:
+            text = text.split("```")[1]
+            if text.startswith("json"): text = text[4:]
+        text = text.strip("`").strip()
+
+        parsed = json.loads(text)
+        
+        # Inject metadata to ensure Pydantic doesn't fail
+        parsed.update({
+            "barcode": barcode,
             "product_name": product_name,
-            "code": barcode
-        }
+            "ingredients": ingredients_texts,
+            "raw_openfoodfacts": {"code": barcode, "product_name": product_name}
+        })
 
-        # Validate against the Response Schema
-        return ProductAnalysisResponse(**ai_data)
+        return ProductAnalysisResponse(**parsed)
 
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail=f"AI returned invalid JSON formatting: {raw_text[:100]}...")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Schema Mismatch: {str(e)}")
-
+        print(f"ERROR: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 @app.post("/analyze", response_model=ProductAnalysisResponse)
 async def analyze_product(request: ProductRequest) -> ProductAnalysisResponse:
     """
