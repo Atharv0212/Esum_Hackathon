@@ -21,6 +21,10 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise RuntimeError("GEMINI_API_KEY is not set. Please configure it in your .env file.")
 
+NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+if not NEWS_API_KEY:
+    print("WARNING: NEWS_API_KEY is not set. News features will not work.")
+
 genai.configure(api_key=GEMINI_API_KEY)
 
 app = FastAPI(title="WiseBite Backend", version="0.1.0")
@@ -77,6 +81,16 @@ class ProductAnalysisResponse(BaseModel):
     summary: str
     warnings: List[str] = Field(default_factory=list)
     raw_openfoodfacts: Dict[str, Any] = Field(default_factory=dict)
+
+class NewsArticle(BaseModel):
+    title: str
+    description: Optional[str] = None
+    url: str
+    source: str
+    publishedAt: str
+
+class ProductNewsResponse(BaseModel):
+    articles: List[NewsArticle] = Field(default_factory=list)
 
 
 # --- HELPER FUNCTIONS ---
@@ -358,6 +372,87 @@ async def analyze_product(request: ProductRequest) -> ProductAnalysisResponse:
         barcode=request.barcode,
     )
     return analysis
+
+@app.get("/product-news", response_model=ProductNewsResponse)
+async def get_product_news(query: str):
+    """
+    Fetch real-time updates and controversies about a product using NewsAPI.
+    """
+    if not NEWS_API_KEY:
+        return ProductNewsResponse(**{"articles": []})
+
+    # Build a search query focused on controversies, recalls, or general updates
+    search_query = f'"{query}" AND (controversy OR recall OR update OR safety OR health OR risk)'
+    url = "https://newsapi.org/v2/everything"
+    
+    params = {
+        "q": search_query,
+        "language": "en",
+        "sortBy": "relevancy",
+        "pageSize": 5,
+        "apiKey": NEWS_API_KEY
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params=params)
+        
+        if resp.status_code != 200:
+            print(f"News API Error: {resp.status_code} - {resp.text}")
+            
+        data = resp.json() if resp.status_code == 200 else {}
+        articles = []
+
+        
+        for item in data.get("articles", []):
+            # Skip articles that are removed or missing essential data
+            if item.get("title") == "[Removed]" or not item.get("title") or not item.get("url"):
+                continue
+                
+            articles.append(NewsArticle(**{
+                "title": item.get("title", "No Title"),
+                "description": item.get("description"),
+                "url": item.get("url", ""),
+                "source": item.get("source", {}).get("name", "Unknown Source"),
+                "publishedAt": item.get("publishedAt", "")
+            }))
+            
+        # Fallback to Gemini for historical controversies
+        if len(articles) < 2:
+            try:
+                model = genai.GenerativeModel("gemini-2.5-flash")
+                prompt = (
+                    f"Are there any major historical controversies, FDA recalls, lawsuits, or health risks "
+                    f"associated with the product or brand '{query}'? For example, the Maggi lead case or MDH masala issues. "
+                    f"If yes, provide 1 or 2 short bullet points summarizing the biggest historical issue. "
+                    f"Format the response strictly as a JSON list of objects, each with 'title', 'description', 'source' (e.g., 'Historical Record'), 'url' (use '#'), and 'publishedAt' (approximate year or 'Historical'). "
+                    f"If there are no known controversies, return an empty array []."
+                )
+                gemini_resp = await model.generate_content_async(prompt)
+                text = gemini_resp.text.strip()
+                if "```" in text:
+                    text = text.split("```")[1]
+                    if text.startswith("json"): text = text[4:]
+                text = text.strip("`").strip()
+                
+                import json
+                historical_data = json.loads(text)
+                for item in historical_data:
+                     articles.append(NewsArticle(**{
+                        "title": item.get("title", "Historical Controversy"),
+                        "description": item.get("description", ""),
+                        "url": item.get("url", "#"),
+                        "source": item.get("source", "Historical Record"),
+                        "publishedAt": str(item.get("publishedAt", "Historical"))
+                     }))
+            except Exception as gemini_err:
+                print(f"Gemini fallback error for news: {gemini_err}")
+
+        return ProductNewsResponse(**{"articles": articles})
+        
+    except Exception as e:
+        print(f"Error fetching product news: {e}")
+        return ProductNewsResponse(**{"articles": []})
 
 
 if __name__ == "__main__":

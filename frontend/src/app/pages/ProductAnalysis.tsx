@@ -4,13 +4,13 @@ import { Navigation } from "../components/Navigation";
 import { BlossomDecoration } from "../components/BlossomDecoration";
 import { HealthScoreGauge } from "../components/HealthScoreGauge";
 import { ArrowLeft, AlertTriangle, Info, ShieldAlert, Leaf, Package, Sparkles } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "../components/ui/alert";
 import { mockProducts } from "../data/mockData";
-import { analyzeProduct } from "../api/client";
-import type { ProductAnalysisResponse, IngredientRisk } from "../api/types";
+import { analyzeProduct, fetchProductNews } from "../api/client";
+import type { ProductAnalysisResponse, IngredientRisk, ProductNewsResponse } from "../api/types";
 import { saveRecentScan } from "../utils/storage";
 
 export function ProductAnalysis() {
@@ -22,6 +22,10 @@ export function ProductAnalysis() {
   const [analysis, setAnalysis] = useState<ProductAnalysisResponse | null>(passedAnalysisRaw || null);
   const [loading, setLoading] = useState(!passedAnalysisRaw);
   const [error, setError] = useState<string | null>(null);
+
+  const [news, setNews] = useState<ProductNewsResponse | null>(null);
+  const [newsLoading, setNewsLoading] = useState(false);
+  const [newsError, setNewsError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!id || passedAnalysisRaw) return;
@@ -82,6 +86,28 @@ export function ProductAnalysis() {
       saveRecentScan(product);
     }
   }, [product, loading]);
+
+  useEffect(() => {
+    if (!product || news || newsLoading || newsError) return;
+
+    const query = product.brand && product.brand !== "Scanned Product" 
+      ? `${product.brand} ${product.name}` 
+      : product.name;
+
+    const findNews = async () => {
+      try {
+        setNewsLoading(true);
+        const result = await fetchProductNews(query);
+        setNews(result);
+      } catch (err: any) {
+        setNewsError(err.message || "Failed to fetch news.");
+      } finally {
+        setNewsLoading(false);
+      }
+    };
+    
+    void findNews();
+  }, [product, news, newsLoading, newsError]);
 
   if (loading) {
     return (
@@ -429,6 +455,67 @@ export function ProductAnalysis() {
                 </div>
               ))}
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Product News and Controversies */}
+        <Card className="border-4 border-blue-300 shadow-xl overflow-hidden mt-6">
+          <CardHeader className="bg-gradient-to-r from-blue-50 via-indigo-50 to-blue-50 border-b-2 border-blue-200">
+            <CardTitle className="text-2xl flex items-center gap-2">
+              <Info className="w-7 h-7 text-blue-500" />
+              <span className="bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                Latest Updates & Controversies
+              </span>
+            </CardTitle>
+            <CardDescription className="text-gray-600 mt-2">
+              Recent news, recalls, and public discussions about this product or brand.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-6">
+            {newsLoading ? (
+              <div className="flex flex-col items-center justify-center p-8">
+                <div className="animate-spin text-4xl mb-3">📰</div>
+                <p className="text-blue-600 font-medium tracking-wide">Scanning recent news...</p>
+              </div>
+            ) : newsError ? (
+              <Alert className="border-2 border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50">
+                <AlertTriangle className="h-5 w-5 text-amber-500" />
+                <AlertTitle className="text-amber-800 font-bold">News Unavailable</AlertTitle>
+                <AlertDescription className="text-amber-700">
+                  {newsError}
+                </AlertDescription>
+              </Alert>
+            ) : news?.articles && news.articles.length > 0 ? (
+              <div className="space-y-4">
+                {news.articles.map((article, idx) => (
+                  <div key={idx} className="p-4 rounded-xl border border-blue-100 bg-white hover:shadow-md transition-shadow">
+                    <div className="flex justify-between items-start gap-4 mb-2">
+                      <h4 className="font-bold text-gray-900 text-lg">
+                        <a href={article.url} target="_blank" rel="noreferrer" className="hover:text-blue-600 transition-colors">
+                          {article.title}
+                        </a>
+                      </h4>
+                      <Badge variant="outline" className="border-blue-200 text-blue-700 bg-blue-50 whitespace-nowrap">
+                        {article.source}
+                      </Badge>
+                    </div>
+                    {article.description && (
+                      <p className="text-gray-600 text-sm mb-3">
+                        {article.description}
+                      </p>
+                    )}
+                    <p className="text-xs text-gray-400">
+                      {new Date(article.publishedAt).toLocaleDateString()}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 text-blue-600 bg-gradient-to-r from-blue-50 to-indigo-50 p-6 rounded-2xl border-2 border-blue-200">
+                <Info className="w-6 h-6" />
+                <p className="font-semibold">No recent controversies or major updates found! 🌸</p>
+              </div>
+            )}
           </CardContent>
         </Card>
       </main>

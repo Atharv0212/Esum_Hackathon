@@ -1,4 +1,4 @@
-import type { ProductAnalysisResponse } from "./types";
+import type { ProductAnalysisResponse, ProductNewsResponse } from "./types";
 
 const API_BASE =
   (import.meta as any).env.VITE_API_BASE_URL ?? "http://localhost:8000";
@@ -90,3 +90,24 @@ export async function extractBarcode(file: File): Promise<string> {
   return data.barcode;
 }
 
+export async function fetchProductNews(query: string): Promise<ProductNewsResponse> {
+  const url = new URL(`${API_BASE}/product-news`);
+  url.searchParams.append("query", query);
+
+  const res = await fetch(url.toString(), {
+    method: "GET",
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    try {
+      const parsed = JSON.parse(text);
+      throw new Error(parsed.detail || `Fetch news request failed with ${res.status}`);
+    } catch (e: any) {
+      if (e.message) throw e;
+      throw new Error(text || `Fetch news request failed with ${res.status}`);
+    }
+  }
+
+  return (await res.json()) as ProductNewsResponse;
+}
