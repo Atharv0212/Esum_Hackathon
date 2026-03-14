@@ -76,6 +76,10 @@ class IngredientRisk(BaseModel):
 class ProductAnalysisResponse(BaseModel):
     product_name: Optional[str] = "Unknown Image Product"
     barcode: Optional[str] = "UNKNOWN"
+    category: str = Field(
+        default="misc", 
+        description="Classify into EXACTLY one: energy_drinks, soft_drinks, water_drinks, juice_drinks, tea_coffee, milk_dairy, cheese_dairy, plant_milk, bakery_bread, bakery_pastry, cereal_grains, snacks_salty, snacks_sweet, nuts_seeds, fruits_fresh, veggies_fresh, canned_goods, frozen_meals, condiments, spices_baking, meat_poultry, seafood, plant_protein, misc. Default to misc if unknown."
+    )
     ingredients: List[str] = Field(default_factory=list)
     ingredient_risks: List[IngredientRisk] = Field(default_factory=list)
     summary: str
@@ -152,6 +156,7 @@ async def analyze_with_gemini(
         "properties": {
             "product_name": {"type": "string"},
             "barcode": {"type": "string"},
+            "category": {"type": "string"},
             "ingredients": {"type": "array", "items": {"type": "string"}},
             "ingredient_risks": {
                 "type": "array",
@@ -170,7 +175,7 @@ async def analyze_with_gemini(
             "summary": {"type": "string"},
             "warnings": {"type": "array", "items": {"type": "string"}}
         },
-        "required": ["product_name", "barcode", "ingredients", "ingredient_risks", "summary", "warnings"]
+        "required": ["product_name", "barcode", "category", "ingredients", "ingredient_risks", "summary", "warnings"]
     }
 
     user_instruction = build_off_user_instruction(
@@ -242,6 +247,7 @@ async def analyze_label_image(
         "properties": {
             "product_name": {"type": "string"},
             "barcode": {"type": "string"},
+            "category": {"type": "string"},
             "ingredients": {"type": "array", "items": {"type": "string"}},
             "ingredient_risks": {
                 "type": "array",
@@ -260,7 +266,7 @@ async def analyze_label_image(
             "summary": {"type": "string"},
             "warnings": {"type": "array", "items": {"type": "string"}}
         },
-        "required": ["product_name", "ingredients", "ingredient_risks", "summary", "warnings"]
+        "required": ["product_name", "category", "ingredients", "ingredient_risks", "summary", "warnings"]
     }
 
     prompt_text = (

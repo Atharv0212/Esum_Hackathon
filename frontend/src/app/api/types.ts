@@ -11,6 +11,7 @@ export interface IngredientRisk {
 export interface ProductAnalysisResponse {
   product_name: string | null;
   barcode: string;
+  category: string;
   ingredients: string[];
   ingredient_risks: IngredientRisk[];
   summary: string;

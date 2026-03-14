@@ -55,7 +55,7 @@ export function ProductAnalysis() {
     id: analysis.barcode,
     name: analysis.product_name || "Unknown Product",
     brand: "Scanned Product",
-    image: "https://images.unsplash.com/photo-1606859191214-25806e8e2423?auto=format&fit=crop&w=800&q=80",
+    image: `/categories/${analysis.category || 'misc'}.png`,
     healthScore: analysis.ingredient_risks.some(r => r.hazard_level === "hazard") ? 30 : analysis.ingredient_risks.some(r => r.hazard_level === "caution") ? 65 : 90,
     scanDate: new Date().toISOString(),
     alerts: analysis.warnings || [],
