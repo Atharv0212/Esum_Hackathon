@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Link } from "react-router";
 import { WiseBiteLogo } from "../components/WiseBiteLogo";
 import { ShieldCheck, Plus, X, Sparkles, Home as HomeIcon, GitCompare, User, Menu, Settings, ScanLine, History } from "lucide-react";
@@ -8,7 +8,7 @@ import { Input } from "../components/ui/input";
 import { Label } from "../components/ui/label";
 import { Badge } from "../components/ui/badge";
 import { Checkbox } from "../components/ui/checkbox";
-import { healthProfile } from "../data/mockData";
+import { getUserProfile, saveUserProfile } from "../utils/api";
 
 const commonAllergies = [
   "Peanuts",
@@ -46,9 +46,14 @@ const healthConditions = [
 
 export function Profile() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [selectedAllergies, setSelectedAllergies] = useState<string[]>(healthProfile.allergies);
-  const [selectedDiets, setSelectedDiets] = useState<string[]>(healthProfile.dietaryRestrictions);
-  const [selectedConditions, setSelectedConditions] = useState<string[]>(healthProfile.conditions);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState("");
+
+  // Load from localStorage on mount
+  const savedProfile = getUserProfile();
+  const [selectedAllergies, setSelectedAllergies] = useState<string[]>(savedProfile.allergies || []);
+  const [selectedDiets, setSelectedDiets] = useState<string[]>(savedProfile.dietaryRestrictions || []);
+  const [selectedConditions, setSelectedConditions] = useState<string[]>(savedProfile.diseases || []);
   const [customAllergy, setCustomAllergy] = useState("");
 
   const toggleAllergy = (allergy: string) => {
@@ -84,6 +89,20 @@ export function Profile() {
 
   const removeAllergy = (allergy: string) => {
     setSelectedAllergies(selectedAllergies.filter((a) => a !== allergy));
+  };
+
+  const handleSaveProfile = () => {
+    setIsSaving(true);
+    saveUserProfile({
+      allergies: selectedAllergies.map(a => a.toLowerCase()),
+      diseases: selectedConditions.map(c => c.toLowerCase()),
+      dietaryRestrictions: selectedDiets.map(d => d.toLowerCase()),
+    });
+    setSaveMessage("✅ Profile saved! Your scans will now be personalized.");
+    setTimeout(() => {
+      setIsSaving(false);
+      setSaveMessage("");
+    }, 2000);
   };
 
   return (
@@ -405,11 +424,19 @@ export function Profile() {
           </Card>
 
           {/* Save Button */}
-          <div className="flex justify-center">
-            <Button size="lg" className="bg-gradient-to-r from-emerald-500 via-green-500 to-emerald-500 hover:from-emerald-600 hover:via-green-600 hover:to-emerald-600 px-16 py-6 text-lg rounded-full shadow-2xl">
+          <div className="flex flex-col items-center gap-3">
+            <Button 
+              size="lg" 
+              onClick={handleSaveProfile}
+              disabled={isSaving}
+              className="bg-gradient-to-r from-emerald-500 via-green-500 to-emerald-500 hover:from-emerald-600 hover:via-green-600 hover:to-emerald-600 px-16 py-6 text-lg rounded-full shadow-2xl"
+            >
               <ShieldCheck className="w-6 h-6 mr-2" />
-              Save Profile 🎋
+              {isSaving ? "Saving..." : "Save Profile 🎋"}
             </Button>
+            {saveMessage && (
+              <p className="text-emerald-600 font-semibold text-sm animate-pulse">{saveMessage}</p>
+            )}
           </div>
         </main>
       </div>

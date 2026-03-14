@@ -1,12 +1,11 @@
 import { Link } from "react-router";
 import { useNavigate } from "react-router";
 import { WiseBiteLogo } from "../components/WiseBiteLogo";
-import { Home as HomeIcon, GitCompare, User, Menu, Settings, ScanLine, History, Bell, Lock, Globe, Palette, ChevronRight, AlertTriangle, Save } from "lucide-react";
+import { Home as HomeIcon, GitCompare, User, Menu, Settings, ScanLine, History, Bell, Lock, Palette, ChevronRight, AlertTriangle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
-import { useState, useEffect } from "react";
-import { getUserProfile, saveUserProfile, UserProfile } from "../utils/api";
+import { useState } from "react";
 
 export function SettingsPage() {
   const navigate = useNavigate();
@@ -14,58 +13,6 @@ export function SettingsPage() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [emailAlerts, setEmailAlerts] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
-
-  // User Profile State
-  const [profile, setProfile] = useState<UserProfile>({ allergies: [], diseases: [] });
-  const [allergyInput, setAllergyInput] = useState("");
-  const [diseaseInput, setDiseaseInput] = useState("");
-  const [isSaving, setIsSaving] = useState(false);
-
-  useEffect(() => {
-    // Load profile on mount
-    const savedProfile = getUserProfile();
-    setProfile(savedProfile);
-  }, []);
-
-  const handleAddAllergy = () => {
-    if (allergyInput.trim() && !profile.allergies.includes(allergyInput.trim().toLowerCase())) {
-      setProfile(prev => ({
-        ...prev,
-        allergies: [...prev.allergies, allergyInput.trim().toLowerCase()]
-      }));
-      setAllergyInput("");
-    }
-  };
-
-  const handleRemoveAllergy = (allergy: string) => {
-    setProfile(prev => ({
-      ...prev,
-      allergies: prev.allergies.filter(a => a !== allergy)
-    }));
-  };
-
-  const handleAddDisease = () => {
-    if (diseaseInput.trim() && !profile.diseases.includes(diseaseInput.trim().toLowerCase())) {
-      setProfile(prev => ({
-        ...prev,
-        diseases: [...prev.diseases, diseaseInput.trim().toLowerCase()]
-      }));
-      setDiseaseInput("");
-    }
-  };
-
-  const handleRemoveDisease = (disease: string) => {
-    setProfile(prev => ({
-      ...prev,
-      diseases: prev.diseases.filter(d => d !== disease)
-    }));
-  };
-
-  const handleSaveProfile = () => {
-    setIsSaving(true);
-    saveUserProfile(profile);
-    setTimeout(() => setIsSaving(false), 500); // UI feedback
-  };
 
   const handleLogout = () => {
     navigate("/");
@@ -165,88 +112,13 @@ export function SettingsPage() {
           <div className="mb-6 flex justify-between items-end">
             <div>
               <p className="text-gray-600 mb-2">
-                Manage your account preferences and health profile
+                Manage your account preferences
               </p>
             </div>
           </div>
 
           {/* Scrollable Rectangular Cards for Settings Sections */}
           <div className="space-y-6">
-            
-            {/* Health Profile Settings */}
-            <Card className="border-3 border-emerald-300 shadow-lg">
-              <CardHeader className="bg-gradient-to-r from-emerald-50 to-green-50 border-b border-emerald-200 flex flex-row items-center justify-between py-4">
-                <CardTitle className="flex items-center gap-3 text-xl m-0">
-                  <User className="w-6 h-6 text-emerald-600" />
-                  Health Profile
-                </CardTitle>
-                <Button 
-                  onClick={handleSaveProfile} 
-                  disabled={isSaving}
-                  className="bg-emerald-600 hover:bg-emerald-700 text-white"
-                >
-                  <Save className="w-4 h-4 mr-2" />
-                  {isSaving ? "Saving..." : "Save Profile"}
-                </Button>
-              </CardHeader>
-              <CardContent className="p-6 space-y-6">
-                
-                {/* Allergies Section */}
-                <div className="space-y-3">
-                  <h4 className="font-semibold text-gray-900">Allergies</h4>
-                  <p className="text-sm text-gray-600 mb-2">Add your allergies to trigger warnings during scans.</p>
-                  <div className="flex gap-2">
-                    <input 
-                      type="text" 
-                      value={allergyInput}
-                      onChange={(e) => setAllergyInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleAddAllergy()}
-                      placeholder="e.g. peanuts, dairy, gluten" 
-                      className="flex-1 p-2 border border-emerald-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                    <Button onClick={handleAddAllergy} variant="outline" className="border-emerald-500 text-emerald-700 hover:bg-emerald-50">Add</Button>
-                  </div>
-                  <div className="flex flex-wrap gap-2 mt-3">
-                    {profile.allergies.map(allergy => (
-                      <div key={allergy} className="bg-red-50 text-red-700 border border-red-200 px-3 py-1 rounded-full flex items-center gap-2 text-sm font-medium">
-                        {allergy}
-                        <button onClick={() => handleRemoveAllergy(allergy)} className="text-red-500 hover:text-red-800 font-bold">×</button>
-                      </div>
-                    ))}
-                    {profile.allergies.length === 0 && <span className="text-sm text-gray-400 italic">No allergies added.</span>}
-                  </div>
-                </div>
-
-                <hr className="border-emerald-100" />
-
-                {/* Diseases Section */}
-                <div className="space-y-3">
-                  <h4 className="font-semibold text-gray-900">Underlying Diseases / Dietary Restrictions</h4>
-                  <p className="text-sm text-gray-600 mb-2">Add conditions to avoid risky ingredients (e.g. diabetes, hypertension).</p>
-                  <div className="flex gap-2">
-                    <input 
-                      type="text" 
-                      value={diseaseInput}
-                      onChange={(e) => setDiseaseInput(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && handleAddDisease()}
-                      placeholder="e.g. diabetes, high blood pressure" 
-                      className="flex-1 p-2 border border-emerald-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    />
-                    <Button onClick={handleAddDisease} variant="outline" className="border-emerald-500 text-emerald-700 hover:bg-emerald-50">Add</Button>
-                  </div>
-                  <div className="flex flex-wrap gap-2 mt-3">
-                    {profile.diseases.map(disease => (
-                      <div key={disease} className="bg-amber-50 text-amber-700 border border-amber-200 px-3 py-1 rounded-full flex items-center gap-2 text-sm font-medium">
-                        {disease}
-                        <button onClick={() => handleRemoveDisease(disease)} className="text-amber-500 hover:text-amber-800 font-bold">×</button>
-                      </div>
-                    ))}
-                    {profile.diseases.length === 0 && <span className="text-sm text-gray-400 italic">No restrictions added.</span>}
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
             {/* Account Settings */}
             <Card className="border-3 border-emerald-300 shadow-lg">
               <CardHeader className="bg-gradient-to-r from-emerald-50 to-green-50 border-b border-emerald-200">

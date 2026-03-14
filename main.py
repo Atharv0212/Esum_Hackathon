@@ -1,6 +1,7 @@
 import os
 import io
 import json
+import asyncio
 from enum import Enum
 from typing import List, Optional, Dict, Any
 
@@ -26,6 +27,36 @@ if not NEWS_API_KEY:
     print("WARNING: NEWS_API_KEY is not set. News features will not work.")
 
 genai.configure(api_key=GEMINI_API_KEY)
+
+# --- RETRY HELPER ---
+import re
+
+async def gemini_generate_with_retry(model, content, max_retries=3, system_instruction=None):
+    """Retry Gemini API calls with smart backoff based on server-reported retry delays."""
+    last_error = None
+    
+    for attempt in range(max_retries):
+        try:
+            return await model.generate_content_async(content)
+        except Exception as e:
+            last_error = e
+            err_str = str(e)
+            err_lower = err_str.lower()
+            is_rate_limit = "429" in err_lower or "quota" in err_lower or "exhausted" in err_lower or "resource" in err_lower
+            
+            if not is_rate_limit:
+                raise  # Non-rate-limit errors fail immediately
+            
+            if attempt < max_retries - 1:
+                # Try to extract retry_delay from error message
+                match = re.search(r'retry.*?(\d+)', err_str)
+                wait_time = int(match.group(1)) + 2 if match else 20 * (attempt + 1)
+                wait_time = min(wait_time, 65)  # Cap at 65 seconds
+                print(f"Rate limited (attempt {attempt + 1}/{max_retries}). Waiting {wait_time}s before retry...")
+                await asyncio.sleep(wait_time)
+            else:
+                print(f"All {max_retries} attempts exhausted. Rate limit still active.")
+                raise
 
 app = FastAPI(title="WiseBite Backend", version="0.1.0")
 
@@ -189,7 +220,7 @@ async def analyze_with_gemini(
 
     # 4. Generate and Parse
     try:
-        response = await model.generate_content_async(user_instruction["parts"])
+        response = await gemini_generate_with_retry(model, user_instruction["parts"])
         text = response.text.strip()
         
         # Strip markdown fences
@@ -269,10 +300,19 @@ async def analyze_label_image(
         "required": ["product_name", "category", "ingredients", "ingredient_risks", "summary", "warnings"]
     }
 
+    profile_context = ""
+    if user_profile.allergies:
+        profile_context += f"\n- ALLERGIES: {user_profile.allergies}. Any ingredient containing or derived from these allergens MUST be 'hazard'."
+    if user_profile.diseases:
+        profile_context += f"\n- DISEASES/CONDITIONS: {user_profile.diseases}. Ingredients harmful for these conditions MUST be 'hazard' or 'caution'. Example: sugar/glucose/fructose/sucrose = 'hazard' for diabetes; sodium/salt = 'caution' for hypertension."
+
     prompt_text = (
-        f"Read the ingredients label from the attached image. "
-        f"Extract the ingredients and analyze safety for a user with allergies: {user_profile.allergies} "
-        f"and diseases: {user_profile.diseases}. "
+        f"CRITICAL: Read the ingredients label from the attached image. "
+        f"Extract ALL ingredients and personalize the hazard_level for THIS specific user's medical profile. "
+        f"Do NOT give generic safety ratings — an ingredient safe for healthy people may be HAZARDOUS for this user.\n"
+        f"\nUSER MEDICAL PROFILE:{profile_context}\n"
+        f"\nFor EVERY ingredient: set hazard_level based on THIS user's allergies and diseases. "
+        f"Always populate related_allergies and related_diseases with the user's matching conditions. "
         f"Return ONLY valid JSON matching this schema: {json.dumps(schema)}"
     )
 
@@ -282,7 +322,7 @@ async def analyze_label_image(
     )
 
     try:
-        response = await model.generate_content_async([prompt_text, image_part])
+        response = await gemini_generate_with_retry(model, [prompt_text, image_part])
         text = response.text.strip()
         
         if "```" in text:
@@ -434,7 +474,7 @@ async def get_product_news(query: str):
                     f"Format the response strictly as a JSON list of objects, each with 'title', 'description', 'source' (e.g., 'Historical Record'), 'url' (use '#'), and 'publishedAt' (approximate year or 'Historical'). "
                     f"If there are no known controversies, return an empty array []."
                 )
-                gemini_resp = await model.generate_content_async(prompt)
+                gemini_resp = await gemini_generate_with_retry(model, prompt)
                 text = gemini_resp.text.strip()
                 if "```" in text:
                     text = text.split("```")[1]

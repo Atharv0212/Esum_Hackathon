@@ -1,6 +1,7 @@
 export interface UserProfile {
   allergies: string[];
   diseases: string[];
+  dietaryRestrictions?: string[];
 }
 
 export interface IngredientRisk {
