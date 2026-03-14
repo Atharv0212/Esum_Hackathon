@@ -376,7 +376,7 @@ async def extract_barcode_from_image(
     )
 
     try:
-        response = await model.generate_content_async([prompt_text, image_part])
+        response = await gemini_generate_with_retry(model, [prompt_text, image_part])
         text = response.text.strip()
         
         if not text or "NOT_FOUND" in text:

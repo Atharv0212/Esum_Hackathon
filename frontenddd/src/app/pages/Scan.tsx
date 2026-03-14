@@ -11,6 +11,7 @@ export function Scan() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisStep, setAnalysisStep] = useState("");
+  const [barcodeInput, setBarcodeInput] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate();
 
@@ -25,41 +26,58 @@ export function Scan() {
   };
 
   const handleAnalyze = async () => {
-    if (!selectedFile) return;
+    if (!selectedFile && !barcodeInput.trim()) return;
     
     setIsAnalyzing(true);
     const profile = getUserProfile();
 
     try {
-      // STEP 1: Try to extract a barcode from the image
-      setAnalysisStep("🔍 Step 1/3: Searching for barcode in image...");
-      let barcodeResult: string | null = null;
-      try {
-        barcodeResult = await extractBarcodeFromImage(selectedFile);
-      } catch {
-        // No barcode found — this is expected, continue to fallback
-        barcodeResult = null;
-      }
-
-      if (barcodeResult) {
-        // STEP 2a: Barcode found! Look up product via OpenFoodFacts + Gemini
-        setAnalysisStep(`✅ Barcode found: ${barcodeResult}. Looking up product database...`);
+      // If user typed a barcode manually, skip image extraction entirely
+      if (barcodeInput.trim()) {
+        setAnalysisStep(`📦 Looking up barcode ${barcodeInput.trim()} in product database...`);
         try {
-          const result: ProductAnalysisResponse = await analyzeProduct(barcodeResult, profile);
+          const result: ProductAnalysisResponse = await analyzeProduct(barcodeInput.trim(), profile);
           saveRecentScan(result);
-          navigate(`/product/${barcodeResult}`, { state: { analysisResult: result } });
+          navigate(`/product/${barcodeInput.trim()}`, { state: { analysisResult: result } });
           return;
         } catch {
-          // Product not in OpenFoodFacts — fall through to image analysis
-          setAnalysisStep("⚠️ Product not found in database. Analyzing image directly...");
+          setAnalysisStep("⚠️ Product not found in database.");
+          if (!selectedFile) {
+            alert("Product not found in database. Try uploading an image of the ingredient label instead.");
+            return;
+          }
+          setAnalysisStep("⚠️ Not found in database. Analyzing uploaded image...");
         }
       }
 
-      // STEP 2b/3: No barcode (or barcode product not found) — analyze the image directly
-      setAnalysisStep("🧪 Step 2/3: Analyzing ingredient list from image...");
-      const result: ProductAnalysisResponse = await analyzeLabelImage(selectedFile, profile);
-      saveRecentScan(result);
-      navigate(`/product/${result.barcode || 'IMAGE_SCAN'}`, { state: { analysisResult: result } });
+      if (selectedFile) {
+        // STEP 1: Try to extract a barcode from the image
+        setAnalysisStep("🔍 Step 1/3: Searching for barcode in image...");
+        let barcodeResult: string | null = null;
+        try {
+          barcodeResult = await extractBarcodeFromImage(selectedFile);
+        } catch {
+          barcodeResult = null;
+        }
+
+        if (barcodeResult) {
+          setAnalysisStep(`✅ Barcode found: ${barcodeResult}. Looking up product database...`);
+          try {
+            const result: ProductAnalysisResponse = await analyzeProduct(barcodeResult, profile);
+            saveRecentScan(result);
+            navigate(`/product/${barcodeResult}`, { state: { analysisResult: result } });
+            return;
+          } catch {
+            setAnalysisStep("⚠️ Product not found in database. Analyzing image directly...");
+          }
+        }
+
+        // Fallback: analyze the image directly
+        setAnalysisStep("🧪 Analyzing ingredient list from image...");
+        const result: ProductAnalysisResponse = await analyzeLabelImage(selectedFile, profile);
+        saveRecentScan(result);
+        navigate(`/product/${result.barcode || 'IMAGE_SCAN'}`, { state: { analysisResult: result } });
+      }
 
     } catch (error) {
       console.error("Analysis failed:", error);
@@ -222,6 +240,25 @@ export function Scan() {
                   </Button>
                 </div>
 
+                {/* OR Divider */}
+                <div className="flex items-center gap-4 my-4">
+                  <div className="flex-1 h-px bg-emerald-200"></div>
+                  <span className="text-sm font-semibold text-gray-500">OR ENTER BARCODE</span>
+                  <div className="flex-1 h-px bg-emerald-200"></div>
+                </div>
+
+                {/* Manual Barcode Input */}
+                <div>
+                  <input
+                    type="text"
+                    value={barcodeInput}
+                    onChange={(e) => setBarcodeInput(e.target.value)}
+                    placeholder="Type barcode number (e.g. 737628064502)"
+                    className="w-full p-4 border-2 border-emerald-300 rounded-xl text-center text-lg font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500"
+                    disabled={isAnalyzing}
+                  />
+                </div>
+
                 {/* Analyze Button */}
                 <div className="mt-8 pt-8 border-t-2 border-emerald-200">
                   {/* Step Status Indicator */}
@@ -233,7 +270,7 @@ export function Scan() {
                   <Button 
                     size="lg" 
                     onClick={handleAnalyze}
-                    disabled={!selectedFile || isAnalyzing}
+                    disabled={(!selectedFile && !barcodeInput.trim()) || isAnalyzing}
                     className="w-full bg-gradient-to-r from-emerald-500 via-green-500 to-emerald-500 hover:from-emerald-600 hover:via-green-600 hover:to-emerald-600 text-white rounded-full text-xl font-bold shadow-2xl py-7 disabled:opacity-50"
                   >
                     {isAnalyzing ? "Analyzing..." : "Analyze Product Image"}
